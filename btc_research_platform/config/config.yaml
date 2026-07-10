@@ -1,0 +1,74 @@
+﻿# BTC Research Platform — Phase 1 configuration
+# Research target: BTCUSDT USD-M Perpetual Futures (Binance). See README
+# "Two-Venue Research Model" — this is the research laboratory layer.
+
+project:
+  symbol: "BTCUSDT"
+  market: "um_futures"    # USDT-margined perpetual futures (informational)
+  start_month: "2023-01"  # configured beginning of the incremental sequence
+
+paths:
+  raw_data_dir: "C:/Users/Usuario/Desktop/Spot"       # the "inbox" — drop the next month's zip/csv here
+  warehouse_dir: "C:/Users/Usuario/Desktop/btc_research_platform/warehouse"
+  state_db: "C:/Users/Usuario/Desktop/btc_research_platform/state/pipeline_state.db"
+  log_dir: "C:/Users/Usuario/Desktop/btc_research_platform/logs"
+  reports_dir: "C:/Users/Usuario/Desktop/btc_research_platform/reports"
+  # No archive_dir / retention setting: raw source files are deleted only
+  # via the explicit, verified `--delete-source` command — never automatic.
+
+processing:
+  chunk_rows: 2000000
+
+  # Physical Parquet row-group size for the tick layer — deliberately
+  # smaller than chunk_rows for finer DuckDB min/max pruning on
+  # trade_time_ns. See parquet_store.py.
+  parquet_row_group_size: 500000
+
+  # Checked before opening a writer AND before every chunk write. Below
+  # this, ingestion pauses (status='paused_low_disk', safely resumable)
+  # rather than risk a corrupt file. Lower than before since the
+  # incremental one-month workflow needs much less headroom than a
+  # multi-decade batch ingest did.
+  min_free_disk_gb: 2.0
+
+  # Binance switched Futures trade timestamps from millisecond to
+  # microsecond epoch values around Jan 2025. Every timestamp is
+  # classified individually by magnitude — see src/schema.py.
+  timestamp_unit_threshold: 1.0e15
+
+  # Single-trade price move (as a fraction, e.g. 0.05 = 5%) that gets
+  # flagged as an abnormal jump. COUNTED and reported, never filtered —
+  # a real flash move is data, not noise.
+  abnormal_price_jump_pct: 0.05
+
+  # --- DuckDB connection settings ---
+  # Hard-learned lesson carried forward: DuckDB's spill-to-disk temp
+  # directory and its size cap must be set EXPLICITLY, never left to
+  # auto-detection (which previously resolved to ~798MB on a nearly-full
+  # drive and caused an OutOfMemoryException generating 1-second bars over
+  # ~1.3B rows). See duckdb_utils.py.
+  duckdb_memory_limit_gb: 2
+  duckdb_threads: 2
+  duckdb_max_temp_gb: 10
+
+bars:
+  fixed_intervals: ["1s", "1min", "5min", "15min", "30min", "1h", "4h"]
+  calendar_intervals: ["1d", "1w", "1mo"]
+
+features:
+  atr_period: 14
+  realized_vol_window: 30
+  large_trade_quantile: 0.99
+  value_area_pct: 0.70
+  profile_bin_size: 10.0
+  stacked_imbalance_ratio: 3.0
+  stacked_imbalance_min_bars: 3
+
+  # Delta / cumulative delta generated at each of these resolutions
+  # (cheap — built on the already-small bar tables, not raw ticks).
+  orderflow_intervals: ["1min", "5min", "15min", "1h"]
+
+  # Footprint: the one derived dataset expensive enough to generate at a
+  # single fixed resolution rather than many — see features/footprint.py.
+  footprint_bar_interval: "1min"
+  footprint_bin_size: 10.0
